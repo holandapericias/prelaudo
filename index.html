@@ -1482,10 +1482,10 @@ async function analisarDocumentos() {
     : subtipo === 'insalubridade' ? 'Insalubridade'
     : subtipo === 'periculosidade' ? 'Periculosidade' : 'Insalubridade e Periculosidade';
 
-  // ── Passo 1: Analisar petição inicial ──
   setLoading(true, '🤖 Analisando petição inicial...');
   setStatus('inicial', 'loading', '⏳ Analisando...');
 
+  // ── PASSO 1: Analisar petição inicial ──
   let dadosInicial = {};
   try {
     const prompt1 = `Você é especialista em perícias trabalhistas brasileiras.
@@ -1494,17 +1494,16 @@ Analise esta petição inicial e extraia:
 2. Nome completo do reclamante
 3. Nome completo da(s) reclamada(s)
 4. Vara/Tribunal
-5. Função/cargo exercido pelo reclamante
-6. Período de trabalho (início e fim se houver)
-7. Síntese detalhada das alegações — foque em: ${alegacoes.join(', ') || tipoLabel} (mínimo 3 parágrafos)
+5. Função/cargo exercido
+6. Período de trabalho
+7. Síntese das alegações focando em: ${alegacoes.join(', ') || tipoLabel} (mínimo 3 parágrafos)
 8. Pedidos principais
 
-Responda APENAS com JSON válido (sem markdown):
-{"processo":"","reclamante":"","reclamada":"","vara":"","funcao":"","periodo":"","sindrome_alegada":"","alegacoes_resumo":"","pedidos":""}`;
+Responda APENAS com JSON (sem markdown):
+{"processo":"","reclamante":"","reclamada":"","vara":"","funcao":"","periodo":"","alegacoes_resumo":"","pedidos":""}`;
 
     const r1 = await apiClaude({
-      model: 'claude-haiku-4-5',
-      max_tokens: 2000,
+      model: 'claude-haiku-4-5', max_tokens: 1500,
       messages: [{ role: 'user', content: [
         { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: uploads.inicial.base64 } },
         { type: 'text', text: prompt1 }
@@ -1513,71 +1512,48 @@ Responda APENAS com JSON válido (sem markdown):
     dadosInicial = parseJSON(r1.content?.[0]?.text || '{}') || {};
     setStatus('inicial', 'ok', '✓ Analisada');
   } catch(e) {
-    setStatus('inicial', 'erro', '❌ Erro na análise');
+    setStatus('inicial', 'erro', '❌ ' + (e.message?.includes('429') ? 'Rate limit — aguarde e tente novamente' : 'Erro na análise'));
     setLoading(false);
-    showToast('Erro ao analisar a inicial: ' + e.message, true);
+    showToast(e.message?.includes('429') ? 'Limite de chamadas atingido — aguarde 1 minuto e tente novamente' : 'Erro: ' + e.message, true);
     return;
   }
 
-  // ── Passo 2: Analisar defesa (se houver) ──
+  // ── PASSO 2: Defesa (se houver) ──
   let dadosDefesa = {};
   if (uploads.defesa) {
     setLoading(true, '🤖 Analisando defesa...');
     setStatus('defesa', 'loading', '⏳ Analisando...');
+    await new Promise(r => setTimeout(r, 2000));
     try {
-      const prompt2 = `Analise esta contestação/defesa trabalhista e extraia:
-1. Principais argumentos da reclamada para negar o pedido
-2. Alegações sobre condições de trabalho
-3. Documentos mencionados pela defesa
-4. Posição sobre nexo causal (se perícia médica)
-
-Responda APENAS com JSON (sem markdown):
-{"argumentos_principais":"","condicoes_alegadas":"","docs_mencionados":"","posicao_nexo":""}`;
-
       const r2 = await apiClaude({
-        model: 'claude-haiku-4-5',
-        max_tokens: 1500,
+        model: 'claude-haiku-4-5', max_tokens: 1000,
         messages: [{ role: 'user', content: [
           { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: uploads.defesa.base64 } },
-          { type: 'text', text: prompt2 }
+          { type: 'text', text: 'Analise esta contestação trabalhista e extraia em JSON (sem markdown): {"argumentos_principais":"principais argumentos da reclamada (3 parágrafos)","condicoes_alegadas":"o que a empresa diz sobre as condições de trabalho"}' }
         ]}]
       });
       dadosDefesa = parseJSON(r2.content?.[0]?.text || '{}') || {};
       setStatus('defesa', 'ok', '✓ Analisada');
     } catch(e) {
-      setStatus('defesa', 'erro', '❌ Erro');
-      console.warn('Erro defesa:', e);
+      setStatus('defesa', 'erro', '❌ ' + (e.message?.includes('429') ? 'Rate limit' : 'Erro'));
+      console.warn('Defesa:', e.message);
     }
   }
 
-  // ── Passo 3: Analisar documentos médicos (se houver) ──
+  // ── PASSO 3: Documentos médicos (se houver) ──
   let docsMedicos = [];
   if (uploads.medicos) {
     setLoading(true, '🤖 Identificando documentos médicos...');
     setStatus('medicos', 'loading', '⏳ Analisando...');
+    await new Promise(r => setTimeout(r, 2000));
     try {
-      const prompt3 = `Você é especialista em documentação médico-trabalhista brasileira.
-Analise este conjunto de documentos médicos e liste CADA documento separadamente.
-
-Para cada documento identifique:
-- tipo: Atestado Médico | Laudo Médico | Laudo Psicológico | Exame de Imagem (RX/RM/TC/US) | Exame Laboratorial | Receita Médica | ASO | PCMSO | PPRA | CAT | Outro
-- data: data do documento (DD/MM/AAAA ou "Sem data")
-- emissor: nome do médico/clínica/hospital emissor
-- especialidade: especialidade médica (se aplicável)
-- achados_principais: resumo dos achados/resultados mais relevantes (máx 2 frases)
-- relevancia: Alta | Média | Baixa (para a perícia de ${tipoLabel})
-
-Ordene cronologicamente (mais antigo primeiro).
-
-Responda APENAS com JSON (sem markdown):
-{"documentos":[{"tipo":"","data":"","emissor":"","especialidade":"","achados_principais":"","relevancia":""}]}`;
-
       const r3 = await apiClaude({
-        model: 'claude-haiku-4-5',
-        max_tokens: 3000,
+        model: 'claude-haiku-4-5', max_tokens: 2000,
         messages: [{ role: 'user', content: [
           { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: uploads.medicos.base64 } },
-          { type: 'text', text: prompt3 }
+          { type: 'text', text: `Liste CADA documento médico separadamente em ordem cronológica (mais antigo primeiro).
+Para cada um: tipo (Atestado Médico|Laudo Médico|Laudo Psicológico|Exame de Imagem|Exame Laboratorial|Receita|ASO|PCMSO|PPRA|CAT|Outro), data (DD/MM/AAAA ou S/D), emissor, achados_principais (1 frase), relevancia (Alta|Média|Baixa) para perícia de ${tipoLabel}.
+Responda APENAS com JSON (sem markdown): {"documentos":[{"tipo":"","data":"","emissor":"","achados_principais":"","relevancia":""}]}` }
         ]}]
       });
       const parsed = parseJSON(r3.content?.[0]?.text || '{}');
@@ -1585,99 +1561,85 @@ Responda APENAS com JSON (sem markdown):
       setStatus('medicos', 'ok', `✓ ${docsMedicos.length} doc${docsMedicos.length !== 1 ? 's' : ''} identificado${docsMedicos.length !== 1 ? 's' : ''}`);
       renderDocsMedicos(docsMedicos);
     } catch(e) {
-      setStatus('medicos', 'erro', '❌ Erro');
-      console.warn('Erro docs médicos:', e);
+      setStatus('medicos', 'erro', '❌ ' + (e.message?.includes('429') ? 'Rate limit' : 'Erro'));
+      console.warn('Docs médicos:', e.message);
     }
   }
 
-  // ── Passo 4: Gerar formulário estratégico com base em tudo ──
+  // ── PASSO 4: Gerar formulário estratégico ──
   setLoading(true, '🤖 Gerando formulário estratégico...');
+  await new Promise(r => setTimeout(r, 2000));
 
-  const contextoCaso = document.getElementById('contexto-caso').value.trim();
-  const contextoCompleto = [
-    contextoCaso,
-    dadosInicial.alegacoes_resumo || '',
-    dadosDefesa.argumentos_principais || ''
-  ].filter(Boolean).join('\n\n');
+  const contextoCaso = document.getElementById('contexto-caso')?.value?.trim() || '';
+  const contextoCompleto = [contextoCaso, dadosInicial.alegacoes_resumo, dadosDefesa.argumentos_principais].filter(Boolean).join('\n\n');
 
   try {
     const promptForm = `Você é especialista sênior em assistência técnica de perícias judiciais trabalhistas brasileiras.
 
 CASO: ${dadosInicial.reclamante || ''} X ${dadosInicial.reclamada || ''}
 PROCESSO: ${dadosInicial.processo || ''}
-TIPO DE PERÍCIA: ${tipo} — ${tipoLabel}
-ALEGAÇÕES ESPECÍFICAS: ${alegacoes.join(', ') || tipoLabel}
-FUNÇÃO EXERCIDA: ${dadosInicial.funcao || 'não informado'}
-PERÍODO: ${dadosInicial.periodo || 'não informado'}
-SÍNTESE DO CASO: ${contextoCompleto || 'não fornecido'}
-POSIÇÃO DA DEFESA: ${dadosDefesa.argumentos_principais || 'não fornecido'}
+TIPO: ${tipo} — ${tipoLabel}
+ALEGAÇÕES: ${alegacoes.join(', ') || tipoLabel}
+FUNÇÃO: ${dadosInicial.funcao || 'não informado'}
+CONTEXTO: ${contextoCompleto || 'não fornecido'}
+DEFESA: ${dadosDefesa.argumentos_principais || 'não fornecido'}
 
-TAREFA: Gere um formulário com DOIS BLOCOS:
+Gere formulário com DOIS BLOCOS:
 
-BLOCO "equipe" — campos que a equipe Holanda preenche ANTES de gerar o pré-laudo:
-- Dados do processo e histórico (já pré-preenchidos com o que extraímos)
-- Informações estratégicas para contextualizar o assistente
+BLOCO "equipe" — campos que a Holanda Perícias preenche ANTES:
+- Dados do processo e contexto estratégico para o assistente
+- Máx 6 campos relevantes
 
 BLOCO "assistente" — campos que o assistente preenche APÓS a perícia:
-- Observações ESPECÍFICAS e ESTRATÉGICAS para este caso de ${tipoLabel}
-- Baseie nos fatos específicos: função "${dadosInicial.funcao || ''}", alegações "${alegacoes.join(', ')}"
-- Cada campo deve ser uma pergunta/instrução que vai fazer diferença nas manifestações ao laudo
-- Máximo 10 campos por bloco, organizados por seção temática
-- NÃO seja genérico — mencione especificidades do caso quando relevante
+- Observações ESPECÍFICAS para este caso de ${tipoLabel} com alegações "${alegacoes.join(', ')}"
+- Perguntas que farão diferença nas manifestações ao laudo
+- Máx 8 campos, organizados por seção temática
+- NÃO seja genérico — seja específico para estas alegações
 
 Responda APENAS com JSON válido (sem markdown):
 {"blocos":[{"id":"equipe","titulo":"Dados a preencher pela equipe","secoes":[{"titulo":"string","campos":[{"id":"string","label":"string","tipo":"texto|textarea|opcoes|numero","opcoes":[],"placeholder":"string"}]}]},{"id":"assistente","titulo":"Assistente preenche após a perícia","secoes":[{"titulo":"string","campos":[{"id":"string","label":"string","tipo":"texto|textarea|opcoes|numero","opcoes":[],"placeholder":"string"}]}]}]}`;
 
     const rForm = await apiClaude({
-      model: 'claude-haiku-4-5',
-      max_tokens: 3000,
+      model: 'claude-haiku-4-5', max_tokens: 2500,
       messages: [{ role: 'user', content: promptForm }]
     });
 
     formSchema = parseJSON(rForm.content?.[0]?.text || '{}');
     if (!formSchema?.blocos) throw new Error('Formulário inválido — tente novamente');
 
-    // Pré-preencher formValues com dados extraídos
+    // Pré-preencher com dados do Airtable e da análise
     formValues = {};
-    // Do Airtable
-    const pf = selectedPericia.fields;
-    formValues['numero_processo'] = pf['_numero'] || dadosInicial.processo || '';
-    formValues['data_pericia'] = formatDate(pf['Data da Perícia']);
-    formValues['local_pericia'] = pf['Local da Perícia'] || '';
+    formValues['numero_processo'] = f['_numero'] || dadosInicial.processo || '';
+    formValues['data_pericia'] = formatDate(f['Data da Perícia']);
+    formValues['local_pericia'] = f['Local da Perícia'] || '';
     formValues['tipo_pericia'] = `${tipo} — ${tipoLabel}`;
     formValues['assistente_nome'] = selectedAssistente.fields.Name;
     formValues['valor'] = document.getElementById('valor-pericia').value;
-    // Da petição inicial
     if (dadosInicial.reclamante) formValues['reclamante'] = dadosInicial.reclamante;
     if (dadosInicial.reclamada) formValues['reclamada'] = dadosInicial.reclamada;
     if (dadosInicial.vara) formValues['vara'] = dadosInicial.vara;
     if (dadosInicial.funcao) formValues['funcao'] = dadosInicial.funcao;
     if (dadosInicial.periodo) formValues['periodo'] = dadosInicial.periodo;
     if (dadosInicial.alegacoes_resumo) formValues['alegacoes_resumo'] = dadosInicial.alegacoes_resumo;
-    if (dadosInicial.pedidos) formValues['pedidos'] = dadosInicial.pedidos;
-    // Da defesa
     if (dadosDefesa.argumentos_principais) formValues['argumentos_defesa'] = dadosDefesa.argumentos_principais;
-    // Docs médicos
     if (docsMedicos.length > 0) {
-      formValues['documentos_medicos'] = docsMedicos
-        .map(d => `${d.data} — ${d.tipo}${d.emissor ? ' — ' + d.emissor : ''}${d.achados_principais ? ': ' + d.achados_principais : ''}`)
-        .join('\n');
+      formValues['_docsMedicos'] = docsMedicos;
     }
-
-    // Guardar docs médicos para o pré-laudo
-    formValues['_docsMedicos'] = docsMedicos;
 
     setLoading(false);
     renderFormulario();
-    document.getElementById('btn-gerar-prelaudo').style.display = 'block';
-    showToast('✓ Formulário gerado! Revise e edite os campos se necessário.');
+    document.getElementById('btn-gerar-prelaudo').disabled = false;
+    showToast('✓ Formulário gerado! Revise e edite os campos.');
 
   } catch(e) {
     setLoading(false);
-    console.error(e);
-    showToast('Erro ao gerar formulário: ' + e.message, true);
+    const msg = e.message?.includes('429') || e.message?.includes('rate_limit')
+      ? 'Limite de chamadas atingido — aguarde 1-2 minutos e tente novamente'
+      : 'Erro: ' + e.message;
+    showToast(msg, true);
   }
 }
+
 
 function renderDocsMedicos(docs) {
   const container = document.getElementById('docs-medicos-lista');
