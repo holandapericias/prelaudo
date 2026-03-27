@@ -1155,7 +1155,7 @@ function voltarStep1(){
   document.getElementById("step-1-ind").classList.replace("done","active");
   document.getElementById("step-2-ind").classList.remove("active");
 }
-async async function irStep3(){
+async function irStep3(){
   if(!selectedAssistente){showToast("Selecione um assistente.",true);return;}
   const valor=parseFloat(document.getElementById("valor-pericia").value);
   if(isNaN(valor)||valor<=0){showToast("Informe o valor.",true);return;}
