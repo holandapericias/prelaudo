@@ -2156,6 +2156,13 @@ async function confirmarEnvio(){
       }
     }
 
+    // Marca o prazo como "Pré-Laudo Enviado" no Airtable
+    if (selectedPericia && selectedPericia.id) {
+      try {
+        await atUpdate(TBL_PRAZOS, selectedPericia.id, {"Pré-Laudo Enviado?": true});
+      } catch(e) { console.warn("Não consegui marcar Pré-Laudo Enviado:", e); }
+    }
+
     setLoading(false);
     document.getElementById("card-preview").style.display = "none";
     document.getElementById("card-confirmacao").style.display = "block";
