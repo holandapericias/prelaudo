@@ -1092,6 +1092,19 @@ async function carregarPericias(){
       });
     }
     renderPericias();
+    // Deep link: ?prazo=recXXX vindo do dashboard de prazos -> auto-selecionar + avançar
+    try{
+      const pp=new URLSearchParams(location.search).get('prazo');
+      if(pp){
+        const idx=pericias.findIndex(p=>p.id===pp);
+        if(idx>=0){
+          selecionarPericia(idx);
+          const el=document.getElementById('popt-'+idx);
+          if(el)el.scrollIntoView({behavior:'smooth',block:'center'});
+          setTimeout(()=>{try{irStep2();}catch(e){}},400);
+        }
+      }
+    }catch(e){console.warn('deep link falhou',e);}
   }catch(e){
     console.error(e);
     document.getElementById("pericias-lista").innerHTML='<div style="color:var(--danger);padding:24px;text-align:center">Erro ao carregar perícias.</div>';
