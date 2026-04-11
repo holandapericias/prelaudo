@@ -2027,13 +2027,17 @@ ALEGAÇÕES INICIAL: ${fcInicial.slice(0,400)||'não fornecida'}
 DEFESA: ${fcDefesa.slice(0,200)||'não fornecida'}
 DOCUMENTOS MÉDICOS: ${docsResumidos||'nenhum'}
 
-Escreva exatamente 3 parágrafos objetivos (máximo 300 palavras no total, sem títulos, sem marcadores):
-Parágrafo 1: Contexto do caso e o que está em disputa
-Parágrafo 2: Pontos críticos que o assistente deve observar durante a perícia
-Parágrafo 3: Documentos médicos mais relevantes e o que indicam para a tese defensiva`;
+Escreva 3 a 5 parágrafos objetivos e COMPLETOS (500-800 palavras, sem títulos, sem marcadores, sem listas):
+Parágrafo 1: Contexto do caso — quem são as partes, o que está em disputa, qual a tese do reclamante
+Parágrafo 2: Argumentos da defesa e pontos fortes/fracos de cada lado
+Parágrafo 3: Pontos críticos que o assistente deve observar durante a perícia — o que perguntar, o que medir, o que fotografar
+Parágrafo 4: Análise dos documentos médicos/técnicos mais relevantes e o que indicam
+Parágrafo 5: Estratégia recomendada para o assistente técnico
+
+IMPORTANTE: complete TODOS os parágrafos. NÃO termine no meio de uma frase.`;
 
     const rAnalise = await apiClaude({
-      model: 'claude-haiku-4-5', max_tokens: 600,
+      model: 'claude-haiku-4-5', max_tokens: 2000,
       messages: [{ role: 'user', content: promptAnalise }]
     });
     analiseEstrategica = rAnalise.content?.[0]?.text?.trim() || '';
@@ -2366,75 +2370,78 @@ async function gerarWordBase64(d){
       }));
     };
 
+    const{Table,TableRow,TableCell,WidthType,BorderStyle,ShadingType}=docx;
+
     hd("HOLANDA PERÍCIAS","00AEEF");
     hd("PARECER TÉCNICO — ASSISTENTE TÉCNICO","1a1a1a");
-    children.push(new Paragraph({spacing:{after:200}}));
+    children.push(new Paragraph({spacing:{after:100}}));
 
-    info("PROCESSO Nº",d.processo);
-    info("RECLAMANTE",d.reclamante);
-    info("RECLAMADA",d.reclamada);
-    info("DATA DA PERÍCIA",d.dataPericia);
-    info("LOCAL",d.local);
-    info("TIPO DE PERÍCIA",d.tipoLabel);
-    info("ASSISTENTE TÉCNICO",d.assistenteNome);
-    info("VALOR ACORDADO","R$ "+d.valor);
-    if(d.alegacoes?.length>0)info("ALEGAÇÕES",d.alegacoes.join(" | "));
+    // 1. IDENTIFICAÇÃO (tabela limpa 2 colunas)
+    secao("IDENTIFICAÇÃO");
+    const idRows=[
+      ["Processo Nº",d.processo],["Reclamante",d.reclamante],["Reclamada",d.reclamada],
+      ["Data/Hora",d.dataPericia],["Local",d.local],["Tipo",d.tipoLabel],
+      ["Assistente Técnico",d.assistenteNome],["Valor Acordado","R$ "+d.valor]
+    ];
+    if(d.alegacoes?.length>0)idRows.push(["Alegações",d.alegacoes.join(" · ")]);
+    const cellBorder={top:{style:BorderStyle.NONE},bottom:{style:BorderStyle.SINGLE,size:1,color:"e0e8ef"},left:{style:BorderStyle.NONE},right:{style:BorderStyle.NONE}};
+    children.push(new Table({
+      width:{size:100,type:WidthType.PERCENTAGE},
+      rows:idRows.map(([lbl,val])=>new TableRow({children:[
+        new TableCell({width:{size:30,type:WidthType.PERCENTAGE},borders:cellBorder,children:[
+          new Paragraph({spacing:{before:40,after:40},children:[new TextRun({text:lbl,bold:true,size:18,color:"005f88"})]})
+        ]}),
+        new TableCell({borders:cellBorder,children:[
+          new Paragraph({spacing:{before:40,after:40},children:[new TextRun({text:val||"—",size:18})]})
+        ]})
+      ]}))
+    }));
+    children.push(new Paragraph({spacing:{after:100}}));
 
-    // DOCUMENTOS MÉDICOS
-    const docsMed = d.docsMedicos || d.formValues?._docsMedicos || [];
-    if(docsMed.length > 0){
-      secao("DOCUMENTOS MÉDICOS — CATALOGAÇÃO");
-      docsMed.forEach((doc, i) => {
-        // Número e tipo do documento
+    // 2. ANÁLISE ESTRATÉGICA (antes dos documentos!)
+    if(d.analiseEstrategica){
+      secao("ANÁLISE ESTRATÉGICA DO CASO");
+      const paragrafos=d.analiseEstrategica.split(/\n\n+/).filter(p=>p.trim());
+      paragrafos.forEach(p=>{
         children.push(new Paragraph({
-          spacing:{before:120,after:40},
-          children:[
-            new TextRun({text:`${i+1}. ${doc.tipo||'Documento'}`, bold:true, size:20, color:"005f88"}),
-            doc.data ? new TextRun({text:` — ${doc.data}`, size:20, color:"555555"}) : new TextRun({text:''}),
-          ]
+          spacing:{after:120},alignment:AlignmentType.JUSTIFIED,
+          children:[new TextRun({text:p.trim(),size:20,color:"333333"})]
         }));
-        // Emissor e especialidade
-        if(doc.emissor || doc.especialidade){
-          children.push(new Paragraph({
-            spacing:{after:30},
-            children:[new TextRun({
-              text:(doc.emissor||'') + (doc.especialidade ? ` — ${doc.especialidade}` : '') + (doc.cid ? ` (CID: ${doc.cid})` : ''),
-              size:19, italics:true, color:"666666"
-            })]
-          }));
-        }
-        // Achados principais
-        if(doc.achados_principais){
-          children.push(new Paragraph({
-            spacing:{after:30},
-            children:[new TextRun({text:"Achados: ", bold:true, size:19, color:"333333"}),
-                      new TextRun({text:doc.achados_principais, size:19, color:"333333"})]
-          }));
-        }
-        // Relevância e observações
-        if(doc.relevancia || doc.observacoes){
-          children.push(new Paragraph({
-            spacing:{after:80},
-            children:[
-              doc.relevancia ? new TextRun({text:`Relevância: ${doc.relevancia}   `, bold:true, size:19,
-                color: doc.relevancia==='Alta' ? 'c0392b' : doc.relevancia==='Média' ? 'e67e22' : '27ae60'}) : new TextRun({text:''}),
-              doc.observacoes ? new TextRun({text:doc.observacoes, size:19, color:"444444"}) : new TextRun({text:''})
-            ]
-          }));
-        }
       });
+      children.push(new Paragraph({spacing:{after:80}}));
     }
 
-    // MUDANÇA 9: Análise estratégica da IA
-    if(d.analiseEstrategica){
-      children.push(new Paragraph({
-        spacing:{before:200,after:100},
-        children:[new TextRun({text:"ANÁLISE ESTRATÉGICA DO CASO",bold:true,size:24,color:"005f88"})]
-      }));
-      children.push(new Paragraph({
-        spacing:{after:160},
-        children:[new TextRun({text:d.analiseEstrategica,size:20,italics:true,color:"333333"})]
-      }));
+    // 3. DOCUMENTOS MÉDICOS/TÉCNICOS (tabela estruturada)
+    const docsMed = d.docsMedicos || d.formValues?._docsMedicos || [];
+    if(docsMed.length > 0){
+      secao("DOCUMENTOS — "+docsMed.length+" CATALOGADOS");
+      const hdCell=(txt)=>new TableCell({
+        shading:{type:ShadingType.CLEAR,fill:"005f88"},borders:cellBorder,
+        children:[new Paragraph({spacing:{before:30,after:30},children:[new TextRun({text:txt,bold:true,size:16,color:"ffffff"})]})]
+      });
+      const dCell=(txt,opts)=>new TableCell({
+        borders:cellBorder,verticalAlign:"top",
+        children:[new Paragraph({spacing:{before:30,after:30},children:[new TextRun({text:txt||"—",size:16,...(opts||{})})]})]
+      });
+      const relColor=r=>r==='Alta'?'c0392b':r==='Média'?'e67e22':'27ae60';
+      const tableRows=[new TableRow({children:[hdCell("#"),hdCell("Data"),hdCell("Tipo / Emissor"),hdCell("Achados Principais"),hdCell("Rel.")]})];
+      docsMed.forEach((doc,i)=>{
+        tableRows.push(new TableRow({children:[
+          dCell(String(i+1),{bold:true}),
+          dCell(doc.data||"S/D"),
+          new TableCell({borders:cellBorder,verticalAlign:"top",children:[
+            new Paragraph({spacing:{before:30,after:10},children:[new TextRun({text:doc.tipo||"—",bold:true,size:16,color:"005f88"})]}),
+            new Paragraph({spacing:{after:10},children:[new TextRun({text:(doc.emissor||"")+(doc.especialidade?" · "+doc.especialidade:"")+(doc.cid?" ("+doc.cid+")":""),size:14,italics:true,color:"666666"})]}),
+          ]}),
+          new TableCell({borders:cellBorder,verticalAlign:"top",children:[
+            new Paragraph({spacing:{before:30,after:10},children:[new TextRun({text:doc.achados_principais||"—",size:16})]}),
+            ...(doc.observacoes?[new Paragraph({spacing:{after:10},children:[new TextRun({text:doc.observacoes,size:14,italics:true,color:"666666"})]})]:[])]
+          }),
+          dCell(doc.relevancia||"—",{bold:true,color:relColor(doc.relevancia)})
+        ]}));
+      });
+      children.push(new Table({width:{size:100,type:WidthType.PERCENTAGE},rows:tableRows}));
+      children.push(new Paragraph({spacing:{after:100}}));
     }
 
     // Dados da equipe
