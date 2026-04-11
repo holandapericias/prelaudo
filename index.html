@@ -1324,16 +1324,28 @@ async function irStep2(){
   }else{
     renderAssistentes(assistentes);
   }
-  // Auto-selecionar assistente se veio da URL (?ass=recXXX&valor=NNN)
+  // Auto-selecionar assistente: 1) URL params, 2) dados do prazo no Airtable
   try{
     const pp=new URLSearchParams(location.search);
-    const assParam=pp.get('ass');
-    const valorParam=pp.get('valor');
-    if(assParam){
-      const idx=assistentes.findIndex(a=>a.id===assParam);
-      if(idx>=0){
-        selecionarAssistente(assistentes[idx].id);
-        if(valorParam)document.getElementById("valor-pericia").value=valorParam;
+    let assToSelect=pp.get('ass')||'';
+    let valorToSet=pp.get('valor')||'';
+    // Fallback: se não tem URL params, pegar dos dados do prazo
+    if(!assToSelect&&f["Assistente"]&&f["Assistente"].length>0){
+      const linked=f["Assistente"][0];
+      assToSelect=typeof linked==='object'?(linked.id||''):linked;
+    }
+    if(!valorToSet&&f["Valor Assistente"]){
+      valorToSet=f["Valor Assistente"];
+    }
+    if(assToSelect){
+      const found=assistentes.find(a=>a.id===assToSelect);
+      if(found){
+        selecionarAssistente(found.id);
+        // Sobrescreve valor com o específico deste prazo (não o billing rate padrão)
+        if(valorToSet)document.getElementById("valor-pericia").value=valorToSet;
+        // Scroll até o card selecionado
+        const card=document.getElementById('acard-'+found.id);
+        if(card)card.scrollIntoView({behavior:'smooth',block:'center'});
       }
     }
   }catch(e){console.warn('auto-select ass falhou',e);}
