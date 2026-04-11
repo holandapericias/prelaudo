@@ -1557,16 +1557,29 @@ function processarUpload(file, tipo) {
     showToast('Selecione um arquivo PDF.', true); return;
   }
   const sizeMB = file.size / 1024 / 1024;
-  if (sizeMB > 32) {
-    setStatus(tipo, 'erro', `❌ Arquivo muito grande (${sizeMB.toFixed(1)}MB) — máximo 32MB`);
+  if (sizeMB > 100) {
+    setStatus(tipo, 'erro', `❌ Arquivo muito grande (${sizeMB.toFixed(1)}MB) — máximo 100MB`);
     return;
   }
   setStatus(tipo, 'loading', `⏳ Lendo ${file.name} (${sizeMB.toFixed(1)}MB)...`);
   const reader = new FileReader();
-  reader.onload = (e) => {
-    uploads[tipo] = { base64: e.target.result.split(',')[1], nome: file.name, sizeMB };
-    setStatus(tipo, 'ok', `✓ ${file.name} (${sizeMB.toFixed(1)}MB)`);
-    // Mostrar botão analisar se inicial estiver carregada
+  reader.onload = async (e) => {
+    const b64 = e.target.result.split(',')[1];
+    uploads[tipo] = { base64: b64, nome: file.name, sizeMB };
+    // Contar páginas se pdf-lib disponível
+    let pageInfo = '';
+    try {
+      if (typeof PDFLib !== 'undefined') {
+        const raw = atob(b64);
+        const bytes = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+        const doc = await PDFLib.PDFDocument.load(bytes, { ignoreEncryption: true });
+        const n = doc.getPageCount();
+        pageInfo = ` · ${n} página${n !== 1 ? 's' : ''}`;
+        if (n > 80) pageInfo += ' (será dividido em blocos automaticamente)';
+      }
+    } catch(ex) {}
+    setStatus(tipo, 'ok', `✓ ${file.name} (${sizeMB.toFixed(1)}MB${pageInfo})`);
     document.getElementById('btn-analisar-wrap').style.display = uploads.inicial ? 'block' : 'none';
   };
   reader.readAsDataURL(file);
@@ -1696,13 +1709,26 @@ async function analisarDocumentos() {
 
   // ── ANÁLISE DOS DOCUMENTOS MÉDICOS (foco principal) ──
   // ── SPLIT DE PDFs GRANDES ──
+  // Converte Uint8Array em base64 sem estourar stack (funciona com arquivos grandes)
+  function uint8ToBase64(uint8) {
+    const CHUNK = 32768;
+    let str = '';
+    for (let i = 0; i < uint8.length; i += CHUNK) {
+      str += String.fromCharCode.apply(null, uint8.subarray(i, i + CHUNK));
+    }
+    return btoa(str);
+  }
+
   async function splitPdfIfNeeded(base64Data, maxPages) {
     maxPages = maxPages || 80;
     try {
-      const bytes = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
+      const raw = atob(base64Data);
+      const bytes = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
       const srcDoc = await PDFLib.PDFDocument.load(bytes, { ignoreEncryption: true });
       const totalPages = srcDoc.getPageCount();
       if (totalPages <= maxPages) return [{ base64: base64Data, pages: totalPages, chunk: 1, totalChunks: 1 }];
+      const nChunks = Math.ceil(totalPages / maxPages);
       const chunks = [];
       for (let start = 0; start < totalPages; start += maxPages) {
         const end = Math.min(start + maxPages, totalPages);
@@ -1711,8 +1737,7 @@ async function analisarDocumentos() {
         const pages = await newDoc.copyPages(srcDoc, indices);
         pages.forEach(p => newDoc.addPage(p));
         const pdfBytes = await newDoc.save();
-        const b64 = btoa(String.fromCharCode(...new Uint8Array(pdfBytes)));
-        chunks.push({ base64: b64, pages: end - start, chunk: chunks.length + 1, totalChunks: Math.ceil(totalPages / maxPages) });
+        chunks.push({ base64: uint8ToBase64(new Uint8Array(pdfBytes)), pages: end - start, chunk: chunks.length + 1, totalChunks: nChunks });
       }
       return chunks;
     } catch (e) {
