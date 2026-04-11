@@ -965,8 +965,8 @@ const AT_BASE = "appTEAYT5TYhnQwTn";
 var AT_KEY = "", WHAPI_TOKEN = "", API_KEY = "";
 var META_WA_TOKEN = "EAAccFo8rQeMBRByuKXr9rqchaFp73p5692IgeYJ"+"dyZBA7EJCbnsn2gGn5IPx6L3TpZBXhBJ1kxadrE8"+"RjN9yHTOLPrdElegjYoBgN4kOpk2w8SiwUvHMyHb"+"LDY6iPjrQhS6nF1CvRyxFnRlKXpYZA9SiXjzM3WvToxtktqxZBFjM96dQ3KiX1j0pomz2LQTDCAZDZD";
 var META_PHONE_ID = "998158"+"920055221";
-const PDF_LIMIT_MB = 32;  // máximo 32MB
-const PDF_LIMIT_PAG = 100; // máximo 100 páginas (limite da API Anthropic)
+const PDF_LIMIT_MB = 100;  // máximo 100MB (split automático cuida do resto)
+const PDF_LIMIT_PAG = 80;  // páginas por bloco enviado à API (split automático)
 
 /* Dados checklists */
 var CK = {
@@ -1695,11 +1695,37 @@ async function analisarDocumentos() {
   let docsMedicos = [];
 
   // ── ANÁLISE DOS DOCUMENTOS MÉDICOS (foco principal) ──
+  // ── SPLIT DE PDFs GRANDES ──
+  async function splitPdfIfNeeded(base64Data, maxPages) {
+    maxPages = maxPages || 80;
+    try {
+      const bytes = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
+      const srcDoc = await PDFLib.PDFDocument.load(bytes, { ignoreEncryption: true });
+      const totalPages = srcDoc.getPageCount();
+      if (totalPages <= maxPages) return [{ base64: base64Data, pages: totalPages, chunk: 1, totalChunks: 1 }];
+      const chunks = [];
+      for (let start = 0; start < totalPages; start += maxPages) {
+        const end = Math.min(start + maxPages, totalPages);
+        const newDoc = await PDFLib.PDFDocument.create();
+        const indices = Array.from({ length: end - start }, (_, i) => start + i);
+        const pages = await newDoc.copyPages(srcDoc, indices);
+        pages.forEach(p => newDoc.addPage(p));
+        const pdfBytes = await newDoc.save();
+        const b64 = btoa(String.fromCharCode(...new Uint8Array(pdfBytes)));
+        chunks.push({ base64: b64, pages: end - start, chunk: chunks.length + 1, totalChunks: Math.ceil(totalPages / maxPages) });
+      }
+      return chunks;
+    } catch (e) {
+      console.warn('pdf split falhou, enviando inteiro:', e);
+      return [{ base64: base64Data, pages: '?', chunk: 1, totalChunks: 1 }];
+    }
+  }
+
   const docKey = uploads.medicos ? 'medicos' : null;
   if (docKey) {
     const isMedica = state.tipo === 'medica';
     setLoading(true, isMedica ? '🤖 Catalogando documentos médicos...' : '🤖 Catalogando documentos técnicos...');
-    setStatus(docKey, 'loading', '⏳ Identificando e catalogando...');
+    setStatus(docKey, 'loading', '⏳ Verificando tamanho do documento...');
 
     const promptMedico = `Você é especialista em documentação médico-trabalhista brasileira.
 
@@ -1739,17 +1765,31 @@ Responda APENAS com JSON válido (sem markdown):
 {"documentos":[{"tipo":"","data":"","emissor":"","especialidade":"","achados_principais":"","relevancia":"","observacoes":""}]}`;
 
     try {
-      const r = await apiClaude({
-        model: 'claude-haiku-4-5', max_tokens: 8000,
-        messages: [{ role: 'user', content: [
-          { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: uploads.medicos.base64 } },
-          { type: 'text', text: isMedica ? promptMedico : promptTecnico }
-        ]}]
-      });
-      const parsed = parseJSON(r.content?.[0]?.text || '{}');
-      docsMedicos = parsed?.documentos || [];
+      // Dividir PDF se > 80 páginas
+      const chunks = await splitPdfIfNeeded(uploads.medicos.base64, 80);
+      const isMulti = chunks.length > 1;
+      if (isMulti) setStatus(docKey, 'loading', `⏳ Documento grande — dividido em ${chunks.length} blocos, processando...`);
+
+      for (let ci = 0; ci < chunks.length; ci++) {
+        const chunk = chunks[ci];
+        if (isMulti) setLoading(true, `🤖 Catalogando bloco ${ci + 1}/${chunks.length} (${chunk.pages} páginas)...`);
+        const prompt = isMedica ? promptMedico : promptTecnico;
+        const r = await apiClaude({
+          model: 'claude-haiku-4-5', max_tokens: 8000,
+          messages: [{ role: 'user', content: [
+            { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: chunk.base64 } },
+            { type: 'text', text: prompt + (isMulti ? `\n\nEste é o bloco ${ci + 1} de ${chunks.length} do mesmo PDF.` : '') }
+          ]}]
+        });
+        const parsed = parseJSON(r.content?.[0]?.text || '{}');
+        const found = parsed?.documentos || [];
+        docsMedicos = docsMedicos.concat(found);
+        if (isMulti && ci < chunks.length - 1) await new Promise(r => setTimeout(r, 1500)); // rate limit
+      }
+
       formValues['_docsMedicos'] = docsMedicos;
-      setStatus('medicos', 'ok', `✓ ${docsMedicos.length} documento${docsMedicos.length !== 1 ? 's' : ''} catalogado${docsMedicos.length !== 1 ? 's' : ''} em ordem cronológica`);
+      setStatus(docKey, 'ok', `✓ ${docsMedicos.length} documento${docsMedicos.length !== 1 ? 's' : ''} catalogado${docsMedicos.length !== 1 ? 's' : ''}`
+        + (isMulti ? ` (${chunks.length} blocos processados)` : ' em ordem cronológica'));
       renderDocsMedicos(docsMedicos);
       document.getElementById('btn-add-doc').style.display = 'inline-block';
     } catch(e) {
@@ -2509,6 +2549,7 @@ function salvarConfig() {
   showToast("✓ Configurações salvas!");
 }
 </script>
+<script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.js"></script>
 <!-- Modal de detalhes do assistente -->
 <div id="modal-assistente" style="display:none"></div>
