@@ -1614,7 +1614,7 @@ function renderFormulario() {
   // Pré-preencher campos com dados do Airtable
   const f = selectedPericia.fields;
   const nomeCaso = f['_nomeCaso'] || '';
-  const partes = nomeCaso.split(' X ');
+  const partes = nomeCaso.split(/\s+[xX]\s+/);
   if (!document.getElementById('fc-reclamante').value && partes[0]) document.getElementById('fc-reclamante').value = partes[0].trim();
   if (!document.getElementById('fc-reclamada').value && partes[1]) document.getElementById('fc-reclamada').value = partes[1].trim().replace(/\s*\(.*?\)/, '');
   if (!document.getElementById('fc-processo').value && f['_numero']) document.getElementById('fc-processo').value = f['_numero'];
@@ -1842,7 +1842,7 @@ Responda APENAS com JSON válido (sem markdown):
   try {
     const promptForm = `Você é especialista sênior em assistência técnica de perícias judiciais trabalhistas brasileiras.
 
-CASO: ${reclamante || (f['_nomeCaso']||'').split(' X ')[0]} X ${reclamada || (f['_nomeCaso']||'').split(' X ')[1]}
+CASO: ${reclamante || (f['_nomeCaso']||'').split(/\s+[xX]\s+/)[0]} X ${reclamada || (f['_nomeCaso']||'').split(/\s+[xX]\s+/)[1]}
 TIPO: ${tipo} — ${tipoLabel}
 ALEGAÇÕES: ${alegacoes.join(', ') || tipoLabel}
 FUNÇÃO: ${funcao || 'não informado'}
@@ -1930,7 +1930,7 @@ function removerDocMedico(i) {
 async function gerarFormulario() {
   const f = selectedPericia.fields;
   const nomeCaso = f['_nomeCaso'] || '';
-  const partes = nomeCaso.split(' X ');
+  const partes = nomeCaso.split(/\s+[xX]\s+/);
 
   // Pré-preencher campos com dados do Airtable
   const elProcesso = document.getElementById('fc-processo');
@@ -1984,8 +1984,8 @@ async function gerarPrelaudo(){
   // Atualizar formValues com os campos de texto
   const f = selectedPericia.fields;
   formValues['numero_processo'] = fcProcesso || f['_numero'] || '';
-  formValues['reclamante']      = fcReclamante || (f['_nomeCaso']||'').split(' X ')[0] || '';
-  formValues['reclamada']       = fcReclamada  || (f['_nomeCaso']||'').split(' X ')[1] || '';
+  formValues['reclamante']      = fcReclamante || (f['_nomeCaso']||'').split(/\s+[xX]\s+/)[0] || '';
+  formValues['reclamada']       = fcReclamada  || (f['_nomeCaso']||'').split(/\s+[xX]\s+/)[1] || '';
   formValues['funcao']          = fcFuncao;
   formValues['periodo']         = fcPeriodo;
   formValues['inicial']         = fcInicial;
