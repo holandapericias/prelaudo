@@ -1307,7 +1307,7 @@ async function salvarNovoAssistente(){
 }
 
 /* ══ NAVEGAÇÃO ══ */
-function irStep2(){
+async function irStep2(){
   if(!selectedPericia){showToast("Selecione uma perícia.",true);return;}
   const f=selectedPericia.fields;
   document.getElementById("resumo-pericia").innerHTML=`
@@ -1319,8 +1319,24 @@ function irStep2(){
   document.getElementById("step-2").style.display="block";
   document.getElementById("step-1-ind").classList.replace("active","done");
   document.getElementById("step-2-ind").classList.add("active");
-  if(!assistentes.length)carregarAssistentes();
-  else renderAssistentes(assistentes);
+  if(!assistentes.length){
+    await carregarAssistentes();
+  }else{
+    renderAssistentes(assistentes);
+  }
+  // Auto-selecionar assistente se veio da URL (?ass=recXXX&valor=NNN)
+  try{
+    const pp=new URLSearchParams(location.search);
+    const assParam=pp.get('ass');
+    const valorParam=pp.get('valor');
+    if(assParam){
+      const idx=assistentes.findIndex(a=>a.id===assParam);
+      if(idx>=0){
+        selecionarAssistente(assistentes[idx].id);
+        if(valorParam)document.getElementById("valor-pericia").value=valorParam;
+      }
+    }
+  }catch(e){console.warn('auto-select ass falhou',e);}
 }
 function voltarStep1(){
   document.getElementById("step-2").style.display="none";
