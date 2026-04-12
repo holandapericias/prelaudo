@@ -844,9 +844,10 @@ body {
         <div style="color:rgba(255,255,255,0.55);font-size:11px;margin-bottom:6px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em">Mensagem WhatsApp — enviada após a perícia</div>
         <textarea id="msg-whatsapp" style="width:100%;background:rgba(255,255,255,0.08);border:1px solid rgba(0,174,239,0.3);border-radius:7px;color:white;font-family:Barlow,sans-serif;font-size:13px;padding:12px;resize:vertical;min-height:100px;outline:none;line-height:1.6"></textarea>
       </div>
-      <div class="btn-group">
+      <div class="btn-group" style="gap:10px">
         <button class="btn btn-outline" onclick="voltarFormulario()">← Voltar</button>
-        <button class="btn btn-blue" onclick="confirmarEnvio()">✓ Confirmar e Salvar</button>
+        <button class="btn btn-blue" id="btn-download-word" onclick="baixarWord()" style="background:#005F88">📥 Baixar Word</button>
+        <button class="btn btn-blue" id="btn-enviar-wpp" onclick="enviarWhatsApp()" style="background:#25D366">📱 Enviar WhatsApp</button>
       </div>
     </div>
 
@@ -2362,20 +2363,16 @@ Você foi contratado(a) como assistente técnico(a) para a seguinte perícia —
 ⚖️ *Tipo:* Perícia ${d.tipoLabel}
 💰 *Valor acordado: R$ ${d.valor}*
 
-Em anexo está o pré-laudo com os dados do caso.
+O pré-laudo com os dados do caso será enviado pela nossa equipe.
 
 *Após a perícia*, você receberá neste número um link para preencher o formulário online — ou diretamente para a pessoa da nossa equipe que o contratou.
 
-Qualquer dúvida, entre em contato pelo e-mail acima.
+Qualquer dúvida, entre em contato.
 *Equipe Holanda Perícias* 🔍`;
 }
 
-/* ══ CONFIRMAR E SALVAR ══ */
-async function confirmarEnvio(){
-  const msg = document.getElementById("msg-whatsapp").value.trim();
-  if (!msg) { showToast("A mensagem está vazia.", true); return; }
-
-  // Passar revisão pendente (caso não tenha clicado Regenerar mas digitou algo)
+/* ══ BAIXAR WORD ══ */
+async function baixarWord(){
   const revisaoPendente=document.getElementById("revisao-prelaudo")?.value?.trim()||'';
   if(revisaoPendente)prelaudoDados._revisao=revisaoPendente;
 
@@ -2385,64 +2382,12 @@ async function confirmarEnvio(){
     const nomeCaso = (prelaudoDados.reclamante || "caso").replace(/[^a-zA-Z]/g,"_").slice(0,20);
     const nomeArq  = `PreLaudo_${nomeCaso}.docx`;
     const mimeDocx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-
-    // SEMPRE baixar o Word no navegador primeiro
     const link = document.createElement("a");
     link.href = `data:${mimeDocx};base64,${docxB64}`;
     link.download = nomeArq;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-
-    setLoading(false);
-
-    // Tentar enviar via WhatsApp — se falhar, não trava
-    let wppStatus = "pendente";
-    if (prelaudoDados.assistenteTel) {
-      try {
-        const tel = limparTel(prelaudoDados.assistenteTel);
-        setLoading(true, "Enviando WhatsApp...");
-        // Meta WhatsApp Business API
-        const metaUrl = `https://graph.facebook.com/v21.0/${META_PHONE_ID}/messages`;
-        const metaHeaders = { "Authorization": `Bearer ${META_WA_TOKEN}`, "Content-Type": "application/json" };
-        // Enviar via template aprovado prelaudo_pericia
-        const d = prelaudoDados;
-        const templateBody = {
-          messaging_product: "whatsapp",
-          to: tel,
-          type: "template",
-          template: {
-            name: "prelaudo_pericia",
-            language: { code: "pt_BR" },
-            components: [{
-              type: "body",
-              parameters: [
-                { type: "text", text: d.assistenteNome || "Assistente" },
-                { type: "text", text: d.processo || "—" },
-                { type: "text", text: d.reclamante || "—" },
-                { type: "text", text: d.reclamada || "—" },
-                { type: "text", text: d.dataPericia || "—" },
-                { type: "text", text: d.local || "—" },
-                { type: "text", text: d.tipoLabel || "—" },
-                { type: "text", text: "R$ " + (d.valor || "—") }
-              ]
-            }]
-          }
-        };
-        const r1 = await fetch(metaUrl, {
-          method: "POST",
-          headers: metaHeaders,
-          body: JSON.stringify(templateBody)
-        });
-        const d1 = await r1.json();
-        console.log("Meta API template:", r1.status, JSON.stringify(d1));
-        if (!r1.ok) throw new Error("Meta API erro " + r1.status + ": " + (d1.error?.message || JSON.stringify(d1)));
-        wppStatus = "enviado";
-      } catch(e) {
-        console.warn("WhatsApp falhou:", e.message);
-        wppStatus = "falhou";
-      }
-    }
 
     // Marca o prazo como "Pré-Laudo Enviado" no Airtable
     if (selectedPericia && selectedPericia.id) {
@@ -2452,27 +2397,63 @@ async function confirmarEnvio(){
     }
 
     setLoading(false);
-    document.getElementById("card-preview").style.display = "none";
-    document.getElementById("card-confirmacao").style.display = "block";
-
-    const statusMsg = wppStatus === "enviado"
-      ? "✓ Documento baixado + WhatsApp enviado"
-      : wppStatus === "falhou"
-      ? "✓ Documento baixado (WhatsApp pendente — verifique a conexão)"
-      : "✓ Documento baixado";
-
-    document.getElementById("confirmacao-final").innerHTML = `
-      <div class="resumo-pericia">
-        <div class="resumo-item" style="flex:1 0 100%"><label>Assistente</label><span>${prelaudoDados.assistenteNome}</span></div>
-        <div class="resumo-item"><label>WhatsApp</label><span>${prelaudoDados.assistenteTel || "—"}</span></div>
-        <div class="resumo-item"><label>Valor</label><span style="color:var(--blue-dark);font-family:Barlow Condensed,sans-serif;font-size:16px">R$ ${prelaudoDados.valor}</span></div>
-        <div class="resumo-item" style="flex:1 0 100%"><label>Status</label><span style="color:var(--success)">${statusMsg}</span></div>
-      </div>`;
-    showToast(statusMsg);
-
+    showToast("✓ Documento Word baixado!");
+    document.getElementById("btn-download-word").innerHTML = "✓ Baixado — Baixar novamente";
+    document.getElementById("btn-download-word").style.background = "#22a06b";
   } catch(e) {
     setLoading(false);
-    showToast("Erro: " + (e.message || "verifique conexão"), true);
+    showToast("Erro ao gerar Word: " + (e.message || "verifique conexão"), true);
+  }
+}
+
+/* ══ ENVIAR WHATSAPP ══ */
+async function enviarWhatsApp(){
+  if (!prelaudoDados.assistenteTel) {
+    showToast("Assistente não tem telefone cadastrado.", true);
+    return;
+  }
+  const tel = limparTel(prelaudoDados.assistenteTel);
+  setLoading(true, "Enviando WhatsApp...");
+  try {
+    const metaUrl = `https://graph.facebook.com/v21.0/${META_PHONE_ID}/messages`;
+    const metaHeaders = { "Authorization": `Bearer ${META_WA_TOKEN}`, "Content-Type": "application/json" };
+    const d = prelaudoDados;
+    const templateBody = {
+      messaging_product: "whatsapp",
+      to: tel,
+      type: "template",
+      template: {
+        name: "prelaudo_pericia",
+        language: { code: "pt_BR" },
+        components: [{
+          type: "body",
+          parameters: [
+            { type: "text", text: d.assistenteNome || "Assistente" },
+            { type: "text", text: d.processo || "—" },
+            { type: "text", text: d.reclamante || "—" },
+            { type: "text", text: d.reclamada || "—" },
+            { type: "text", text: d.dataPericia || "—" },
+            { type: "text", text: d.local || "—" },
+            { type: "text", text: d.tipoLabel || "—" },
+            { type: "text", text: "R$ " + (d.valor || "—") }
+          ]
+        }]
+      }
+    };
+    const r1 = await fetch(metaUrl, {
+      method: "POST",
+      headers: metaHeaders,
+      body: JSON.stringify(templateBody)
+    });
+    const d1 = await r1.json();
+    if (!r1.ok) throw new Error("Meta API erro " + r1.status + ": " + (d1.error?.message || JSON.stringify(d1)));
+    setLoading(false);
+    showToast("✓ WhatsApp enviado para " + d.assistenteNome + "!");
+    document.getElementById("btn-enviar-wpp").innerHTML = "✓ Enviado — Enviar novamente";
+    document.getElementById("btn-enviar-wpp").style.background = "#22a06b";
+  } catch(e) {
+    setLoading(false);
+    showToast("WhatsApp falhou: " + e.message, true);
   }
 }
 
