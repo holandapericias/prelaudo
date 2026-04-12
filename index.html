@@ -2058,6 +2058,50 @@ IMPORTANTE: complete TODOS os parágrafos. NÃO termine no meio de uma frase.`;
     setLoading(false);
   }
 
+  // ── LITERATURA MÉDICA: gerar tópicos sobre as patologias ──
+  let literaturaMedica = '';
+  const docsCatalogados = formValues['_docsMedicos']||[];
+  if(docsCatalogados.length>0||state.alegacoes?.length>0){
+    try{
+      setLoading(true, '🤖 Gerando literatura médica sobre as patologias...');
+      const cidsEncontrados = docsCatalogados.filter(d=>d.cid).map(d=>d.cid+' ('+d.tipo+')').join(', ');
+      const patologiasDesc = docsCatalogados.filter(d=>d.achados_principais).slice(0,8)
+        .map(d=>(d.tipo||'')+': '+d.achados_principais).join(' | ');
+      const promptLit = `Você é médico perito e pesquisador em saúde ocupacional brasileira.
+
+CASO: Perícia ${tipoLabel}
+ALEGAÇÕES: ${state.alegacoes?.join(', ')||'não especificadas'}
+CIDs ENCONTRADOS: ${cidsEncontrados||'nenhum especificado'}
+PATOLOGIAS NOS DOCUMENTOS: ${patologiasDesc||'não catalogadas'}
+FUNÇÃO DO TRABALHADOR: ${formValues['funcao']||'não informada'}
+
+Gere uma seção de LITERATURA MÉDICA estruturada sobre as patologias relevantes deste caso.
+
+Para CADA patologia identificada (máximo 4), escreva um tópico com:
+- Nome da patologia e código CID-10/CID-11
+- Definição e classificação
+- Etiologia e fatores de risco (ocupacionais e não-ocupacionais)
+- Manifestações clínicas típicas
+- Diagnóstico diferencial relevante
+- Relação com o trabalho: quando é reconhecida como doença ocupacional (lista do Ministério da Saúde, Decreto 3.048/99) e quando NÃO é
+- Referências bibliográficas (artigos, diretrizes, tratados relevantes)
+
+Formato: texto corrido por patologia, com título em negrito. Seja técnico e objetivo. 400-600 palavras por patologia.
+NÃO use marcadores ou listas — texto corrido em parágrafos.
+Complete TODOS os tópicos.`;
+
+      const rLit = await apiClaude({
+        model: 'claude-haiku-4-5', max_tokens: 4000,
+        messages: [{ role: 'user', content: promptLit }]
+      });
+      literaturaMedica = rLit.content?.[0]?.text?.trim() || '';
+      setLoading(false);
+    }catch(e){
+      console.warn('Literatura médica falhou:', e.message);
+      setLoading(false);
+    }
+  }
+
   prelaudoDados={
     processo:formValues["numero_processo"]||f["_numero"]||"_______________",
     vara:formValues["vara"]||"",
@@ -2075,6 +2119,7 @@ IMPORTANTE: complete TODOS os parágrafos. NÃO termine no meio de uma frase.`;
     valor:document.getElementById("valor-pericia").value,
     alegacoes:state.alegacoes,
     analiseEstrategica:analiseEstrategica,
+    literaturaMedica:literaturaMedica,
     formSchema,formValues,
     docsMedicos:formValues["_docsMedicos"]||[],
     nomeCaso:f["_nomeCaso"]||""
@@ -2219,6 +2264,11 @@ function montarPrelaudoHTML(d){
       <div class="pl-stitle">Documentos Médicos — ${d.docsMedicos.length} documento(s) identificado(s) · ordem cronológica</div>
       ${docsMedicosHTML}
     </div>`:""}
+
+    ${d.literaturaMedica ? `<div class="pl-secao" style="background:#f8fbfd;border-left:4px solid #005f88;border-radius:0">
+      <div class="pl-stitle">Literatura Médica acerca das Patologias do Reclamante</div>
+      <div class="pl-txt" style="white-space:pre-wrap;font-size:12px;line-height:1.7;color:#333">${d.literaturaMedica.replace(/\*\*/g,'')}</div>
+    </div>` : ''}
 
     <div class="pl-secao pl-campos">
       <div class="pl-campos-hd">
@@ -2493,8 +2543,30 @@ async function gerarWordBase64(d){
 
     // ══════════ 6. LITERATURA MÉDICA ══════════
     secao("LITERATURA MÉDICA ACERCA DAS PATOLOGIAS DO RECLAMANTE");
-    children.push(new Paragraph({spacing:{after:100},children:[txt("(Preencher com literatura médica relevante sobre as patologias identificadas neste caso)",{size:18,italics:true,color:"999999"})]}));
-    blank(4);
+    if(d.literaturaMedica){
+      // Separar por títulos em negrito (linhas que parecem títulos de patologia)
+      const blocos=d.literaturaMedica.split(/\n\n+/).filter(p=>p.trim());
+      blocos.forEach(bloco=>{
+        // Detectar se é título (linha curta, pode ter ** ou CID)
+        const linhas=bloco.split('\n');
+        const primeiraLinha=linhas[0].replace(/\*\*/g,'').trim();
+        const parece_titulo=primeiraLinha.length<120&&(primeiraLinha.match(/[A-Z]{2,}/)||primeiraLinha.match(/CID|L\d|F\d|M\d|G\d|J\d|K\d/i));
+        if(parece_titulo&&linhas.length===1){
+          // Título de patologia
+          children.push(new Paragraph({spacing:{before:180,after:60},
+            children:[txt(primeiraLinha,{bold:true,size:20,color:"005f88"})]
+          }));
+        }else{
+          // Parágrafo de texto
+          children.push(new Paragraph({spacing:{after:100},alignment:AlignmentType.JUSTIFIED,
+            children:[txt(bloco.replace(/\*\*/g,'').trim(),{size:19,color:"333333"})]
+          }));
+        }
+      });
+    }else{
+      children.push(new Paragraph({spacing:{after:100},children:[txt("(Preencher com literatura médica relevante sobre as patologias identificadas neste caso)",{size:18,italics:true,color:"999999"})]}));
+      blank(4);
+    }
 
     // ══════════ 7. DISCUSSÃO (aqui entra a análise da IA) ══════════
     secao("DISCUSSÃO");
