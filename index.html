@@ -490,6 +490,11 @@ body {
 
 <div class="container">
 
+  <div id="caso-banner" style="display:none;background:#005F88;color:white;padding:10px 18px;border-radius:8px;margin-bottom:14px;font-family:Barlow Condensed,sans-serif">
+    <div id="caso-banner-nome" style="font-size:17px;font-weight:700;letter-spacing:0.3px"></div>
+    <div id="caso-banner-proc" style="font-size:12px;opacity:0.7;letter-spacing:0.5px"></div>
+  </div>
+
   <div class="steps">
     <div class="step active" id="step-1-ind">
       <div class="step-num">1</div>
@@ -1163,6 +1168,14 @@ function selecionarPericia(i){
   selectedPericia=pericias[i];
   document.querySelectorAll(".pericia-option").forEach((el,j)=>el.classList.toggle("selected",j===i));
   document.getElementById("btn-step1-next").disabled=false;
+  // Mostrar banner com caso + processo
+  const f=selectedPericia.fields;
+  const banner=document.getElementById("caso-banner");
+  if(banner){
+    banner.style.display="block";
+    document.getElementById("caso-banner-nome").textContent=f["_nomeCaso"]||"Caso selecionado";
+    document.getElementById("caso-banner-proc").textContent=f["_numero"]?"Processo: "+f["_numero"]:"";
+  }
 }
 
 /* ══ STEP 2 ══ */
