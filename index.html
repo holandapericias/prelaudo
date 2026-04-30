@@ -1923,6 +1923,11 @@ Responda APENAS com JSON válido (sem markdown):
     : '';
 
   try {
+    const isMedicaForm = state.tipo === 'medica';
+    const docsLabelForm = isMedicaForm ? 'DOCUMENTOS MÉDICOS ENCONTRADOS' : 'DOCUMENTOS TÉCNICOS ENCONTRADOS (LTCAT/PPRA/PGR/laudos/EPI/PPP/CAT)';
+    const orientacaoCampos = isMedicaForm
+      ? 'Inclua seções como: Anamnese ocupacional, História da doença, Exame físico, Análise de documentos médicos, Discussão sobre nexo causal, Capacidade laboral, Conclusão.'
+      : 'Inclua seções como: Descrição da empresa e função, Avaliação ambiental/das condições (agentes ou riscos conforme alegações), EPI/EPC fornecidos e fiscalização, Análise dos documentos técnicos (LTCAT/PPRA/PGR/EPI/PPP), Discussão sobre caracterização de insalubridade/periculosidade conforme NR-15/NR-16, Conclusão. NÃO inclua anamnese clínica, exame físico, histórico médico, hábitos pessoais nem capacidade laboral.';
     const promptForm = `Você é especialista sênior em assistência técnica de perícias judiciais trabalhistas brasileiras.
 
 CASO: ${reclamante || (f['_nomeCaso']||'').split(/\s+[xX]\s+/)[0]} X ${reclamada || (f['_nomeCaso']||'').split(/\s+[xX]\s+/)[1]}
@@ -1931,11 +1936,12 @@ ALEGAÇÕES: ${alegacoes.join(', ') || tipoLabel}
 FUNÇÃO: ${funcao || 'não informado'}
 ALEGAÇÕES INICIAL: ${textoInicial ? textoInicial.slice(0, 500) : 'não informado'}
 DEFESA: ${textoDefesa ? textoDefesa.slice(0, 300) : 'não fornecida'}
-DOCUMENTOS MÉDICOS ENCONTRADOS:\n${resumoMedico || 'Nenhum'}
+${docsLabelForm}:\n${resumoMedico || 'Nenhum'}
 
 Gere campos estratégicos SOMENTE para o ASSISTENTE TÉCNICO preencher APÓS a perícia.
 - Seja ESPECÍFICO para "${tipoLabel}" com as alegações "${alegacoes.join(', ')}"
-- Se há documentos médicos, inclua perguntas sobre os achados específicos encontrados
+- ${orientacaoCampos}
+- Se há documentos catalogados, inclua perguntas sobre os achados específicos encontrados
 - Perguntas que vão fazer diferença nas manifestações ao laudo
 - Máx 10 campos, organizados em seções temáticas
 - NÃO seja genérico — mencione especificidades do caso
@@ -2101,6 +2107,17 @@ async function gerarPrelaudo(){
     setLoading(true, '🤖 Gerando análise estratégica do caso...');
     const docsResumidos = (formValues['_docsMedicos']||[]).slice(0,5)
       .map(d => d.data+' '+d.tipo+(d.achados_principais ? ': '+d.achados_principais : '')).join(' | ');
+    const isMedicaAna = state.tipo === 'medica';
+    const docsLabel = isMedicaAna ? 'DOCUMENTOS MÉDICOS' : 'DOCUMENTOS TÉCNICOS (LTCAT/PPRA/PGR/laudos/EPI/PPP)';
+    const focoP3 = isMedicaAna
+      ? 'o que perguntar sobre histórico ocupacional e clínico, exame físico dirigido, achados que precisam ser confrontados com documentos médicos'
+      : 'o que medir (níveis de ruído, calor, agentes químicos), o que fotografar (ambiente, EPIs, fichas), quais documentos confrontar (LTCAT vs realidade), o que perguntar sobre fornecimento e fiscalização de EPIs';
+    const focoP4 = isMedicaAna
+      ? 'Análise dos documentos médicos mais relevantes e o que indicam (CIDs, achados clínicos, nexo)'
+      : 'Análise dos documentos técnicos mais relevantes (LTCAT, PPRA, fichas de EPI, ASO) — o que confirmam ou contradizem nas alegações';
+    const focoP5 = isMedicaAna
+      ? 'Estratégia recomendada para o assistente técnico (médica)'
+      : 'Estratégia recomendada para o assistente técnico, focando na caracterização (ou não) de insalubridade/periculosidade conforme NR-15/NR-16';
     const promptAnalise = `Você é especialista sênior em assistência técnica de perícias trabalhistas brasileiras.
 
 CASO: ${formValues['reclamante']||''} X ${formValues['reclamada']||''}
@@ -2108,14 +2125,14 @@ TIPO: ${tipoLabel}
 ALEGAÇÕES: ${state.alegacoes?.join(', ')||'não especificadas'}
 ALEGAÇÕES INICIAL: ${fcInicial.slice(0,400)||'não fornecida'}
 DEFESA: ${fcDefesa.slice(0,200)||'não fornecida'}
-DOCUMENTOS MÉDICOS: ${docsResumidos||'nenhum'}
+${docsLabel}: ${docsResumidos||'nenhum'}
 
 Escreva 3 a 5 parágrafos objetivos e COMPLETOS (500-800 palavras, sem títulos, sem marcadores, sem listas):
 Parágrafo 1: Contexto do caso — quem são as partes, o que está em disputa, qual a tese do reclamante
 Parágrafo 2: Argumentos da defesa e pontos fortes/fracos de cada lado
-Parágrafo 3: Pontos críticos que o assistente deve observar durante a perícia — o que perguntar, o que medir, o que fotografar
-Parágrafo 4: Análise dos documentos médicos/técnicos mais relevantes e o que indicam
-Parágrafo 5: Estratégia recomendada para o assistente técnico
+Parágrafo 3: Pontos críticos que o assistente deve observar durante a perícia — ${focoP3}
+Parágrafo 4: ${focoP4}
+Parágrafo 5: ${focoP5}
 
 IMPORTANTE: complete TODOS os parágrafos. NÃO termine no meio de uma frase.`;
 
@@ -2130,10 +2147,15 @@ IMPORTANTE: complete TODOS os parágrafos. NÃO termine no meio de uma frase.`;
     setLoading(false);
   }
 
-  // ── LITERATURA MÉDICA: gerar tópicos sobre as patologias ──
+  // ── LITERATURA: branch por tipo ──
+  // Médica → patologias/CIDs/Decreto 3.048
+  // Técnica → NRs aplicáveis, anexos, limites de tolerância, súmulas TST
   let literaturaMedica = '';
+  let referenciasNormativas = '';
   const docsCatalogados = formValues['_docsMedicos']||[];
-  if(docsCatalogados.length>0||state.alegacoes?.length>0){
+  const isMedicaLit = state.tipo === 'medica';
+
+  if(isMedicaLit && (docsCatalogados.length>0||state.alegacoes?.length>0)){
     try{
       setLoading(true, '🤖 Gerando literatura médica sobre as patologias...');
       const cidsEncontrados = docsCatalogados.filter(d=>d.cid).map(d=>d.cid+' ('+d.tipo+')').join(', ');
@@ -2172,6 +2194,50 @@ Complete TODOS os tópicos.`;
       console.warn('Literatura médica falhou:', e.message);
       setLoading(false);
     }
+  }else if(!isMedicaLit){
+    // Técnica → Referências Normativas (NRs, limites, jurisprudência)
+    try{
+      setLoading(true, '🤖 Gerando referências normativas (NRs e jurisprudência)...');
+      const docsResumo = docsCatalogados.filter(d=>d.tipo).slice(0,8)
+        .map(d=>(d.tipo||'')+(d.achados_principais?': '+d.achados_principais:'')).join(' | ');
+      const promptNorm = `Você é especialista sênior em segurança e medicina do trabalho brasileira, com domínio das Normas Regulamentadoras (NRs) do MTE, da Lei 6.514/77 e da jurisprudência trabalhista (TST) sobre insalubridade e periculosidade.
+
+CASO: Perícia Técnica — ${tipoLabel}
+ALEGAÇÕES: ${state.alegacoes?.join(', ')||'não especificadas'}
+FUNÇÃO DO TRABALHADOR: ${formValues['funcao']||'não informada'}
+DOCUMENTOS TÉCNICOS CATALOGADOS: ${docsResumo||'nenhum'}
+
+Gere uma seção de REFERÊNCIAS NORMATIVAS estruturada e específica para este caso.
+
+Aborde, em texto corrido por bloco, com título em negrito para cada NR/tema:
+
+1. NR APLICÁVEL PRINCIPAL — ${tipoLabel.toLowerCase().includes('insalubr')?'NR-15 (Atividades e Operações Insalubres)':tipoLabel.toLowerCase().includes('pericul')?'NR-16 (Atividades e Operações Perigosas)':'NR-15 e NR-16'}: estrutura da norma, anexos relevantes para as alegações deste caso, critérios de caracterização, graus (mínimo/médio/máximo para insalubridade) ou percentual fixo (30% periculosidade)
+
+2. ANEXOS ESPECÍFICOS aplicáveis às alegações: listar e explicar os anexos da(s) NR(s) que são pertinentes (ex: Anexo 1 ruído contínuo, Anexo 3 calor, Anexo 11 químicos, Anexo 13 químicos por análise qualitativa, Anexo 14 biológicos para insalubridade; ou inflamáveis, explosivos, energia elétrica, segurança patrimonial, motociclistas para periculosidade)
+
+3. LIMITES DE TOLERÂNCIA (se aplicável): valores numéricos quando houver (ex: 85 dB(A) para ruído, IBUTG por taxa metabólica para calor) e como se mede
+
+4. NRs CORRELATAS: NR-9 (Avaliação e Controle das Exposições), NR-6 (EPI — eficácia e neutralização da insalubridade conforme Súmula 289 TST), NR-7 (PCMSO), NR-17 se ergonomia for fator
+
+5. JURISPRUDÊNCIA TST RELEVANTE: súmulas e orientações jurisprudenciais (ex: Súmula 289, 364, 448 do TST, OJ-SDI1 4) — citar texto sucinto e aplicação ao caso
+
+6. ÔNUS DA PROVA E EFICÁCIA DOS EPIs: como o TST trata a comprovação de fornecimento, fiscalização e eficácia real dos EPIs (Súmula 289 TST)
+
+Formato: texto corrido por bloco, com título em negrito. Seja técnico e objetivo. 300-500 palavras por bloco.
+NÃO use marcadores ou listas internas — texto corrido em parágrafos.
+NÃO inclua patologias, CID, doenças ocupacionais ou Decreto 3.048/99 — esse caso é técnico (insalubridade/periculosidade), não médico.
+Complete TODOS os blocos.`;
+
+      const rNorm = await apiClaude({
+        model: 'claude-haiku-4-5', max_tokens: 4000,
+        messages: [{ role: 'user', content: promptNorm }]
+      });
+      referenciasNormativas = rNorm.content?.[0]?.text?.trim() || '';
+      setLoading(false);
+    }catch(e){
+      console.warn('Referências normativas falharam:', e.message);
+      setLoading(false);
+    }
   }
 
   prelaudoDados={
@@ -2192,6 +2258,7 @@ Complete TODOS os tópicos.`;
     alegacoes:state.alegacoes,
     analiseEstrategica:analiseEstrategica,
     literaturaMedica:literaturaMedica,
+    referenciasNormativas:referenciasNormativas,
     formSchema,formValues,
     docsMedicos:formValues["_docsMedicos"]||[],
     nomeCaso:f["_nomeCaso"]||""
@@ -2333,13 +2400,18 @@ function montarPrelaudoHTML(d){
     </div>`:""}
 
     ${(d.docsMedicos && d.docsMedicos.length > 0) ? `<div class="pl-secao">
-      <div class="pl-stitle">Documentos Médicos — ${d.docsMedicos.length} documento(s) identificado(s) · ordem cronológica</div>
+      <div class="pl-stitle">${d.tipo==='Técnica'?'Documentos Técnicos':'Documentos Médicos'} — ${d.docsMedicos.length} documento(s) identificado(s) · ordem cronológica</div>
       ${docsMedicosHTML}
     </div>`:""}
 
     ${d.literaturaMedica ? `<div class="pl-secao" style="background:#f8fbfd;border-left:4px solid #005f88;border-radius:0">
       <div class="pl-stitle">Literatura Médica acerca das Patologias do Reclamante</div>
       <div class="pl-txt" style="white-space:pre-wrap;font-size:12px;line-height:1.7;color:#333">${d.literaturaMedica.replace(/\*\*/g,'')}</div>
+    </div>` : ''}
+
+    ${d.referenciasNormativas ? `<div class="pl-secao" style="background:#f8fbfd;border-left:4px solid #005f88;border-radius:0">
+      <div class="pl-stitle">Referências Normativas (NRs, Limites de Tolerância e Jurisprudência)</div>
+      <div class="pl-txt" style="white-space:pre-wrap;font-size:12px;line-height:1.7;color:#333">${d.referenciasNormativas.replace(/\*\*/g,'')}</div>
     </div>` : ''}
 
     <div class="pl-secao pl-campos">
@@ -2530,32 +2602,12 @@ async function gerarWordBase64(d){
       ]}))
     }));
 
-    // ══════════ 2. ANAMNESE CLÍNICO-OCUPACIONAL ══════════
-    secao("ANAMNESE CLÍNICO-OCUPACIONAL");
-    subsecao("Sobre a Função");
-    campo("Função exercida",1);
-    campo("Atividades desempenhadas",2);
-    campo("Empregos anteriores e posteriores",2);
-
-    subsecao("Sobre a História da Doença Atual");
-    campo("Início e evolução dos sintomas",2);
-    campo("Como se encontra atualmente e tratamentos em curso",2);
-    campo("Como se sustenta atualmente",1);
-
-    subsecao("Histórico Médico");
-    const histItems=["Comorbidades","Acidentes","Cirurgias","Medicamentos em uso","Histórico familiar de patologias semelhantes"];
-    histItems.forEach(h=>campo(h,1));
-
-    subsecao("Estado Físico e Exame Físico");
-    campo("Estado geral do periciando",2);
-    campo("Exame físico dirigido",3);
-
-    // ══════════ 3. DOCUMENTOS MÉDICOS/TÉCNICOS CATALOGADOS ══════════
-    const docsMed = d.docsMedicos || d.formValues?._docsMedicos || [];
-    if(docsMed.length > 0){
-      secao("DOCUMENTOS CATALOGADOS — "+docsMed.length+" DOCUMENTO(S)");
+    // ══════════ HELPER: bloco de documentos catalogados ══════════
+    const renderDocsCatalogados=(label)=>{
+      const docsMed = d.docsMedicos || d.formValues?._docsMedicos || [];
+      if(!docsMed.length) return;
+      secao(label+" — "+docsMed.length+" DOCUMENTO(S)");
       docsMed.forEach((doc,i)=>{
-        // Cada documento como bloco separado com borda lateral
         children.push(new Paragraph({spacing:{before:120,after:30},
           children:[
             txt((i+1)+". ",{bold:true,size:20,color:"005f88"}),
@@ -2580,60 +2632,38 @@ async function gerarWordBase64(d){
             children:[txt(doc.observacoes,{size:16,italics:true,color:"555555"})]
           }));
         }
-        // Separador sutil
         children.push(new Paragraph({spacing:{after:40},border:{bottom:{style:BorderStyle.SINGLE,size:1,color:"e8edf2"}},children:[txt(" ",{size:4})]}));
       });
-    }
+    };
 
-    // ══════════ 4. AFASTAMENTO PREVIDENCIÁRIO ══════════
-    subsecao("Afastamento Previdenciário Apresentado");
-    campo("Períodos e tipo de benefício",2);
+    // ══════════ HELPER: render texto longo (literatura/normativas) com títulos ══════════
+    const renderTextoBlocos=(texto,placeholder)=>{
+      if(texto){
+        const blocos=texto.split(/\n\n+/).filter(p=>p.trim());
+        blocos.forEach(bloco=>{
+          const linhas=bloco.split('\n');
+          const primeiraLinha=linhas[0].replace(/\*\*/g,'').trim();
+          const parece_titulo=primeiraLinha.length<120&&(primeiraLinha.match(/[A-Z]{2,}/)||primeiraLinha.match(/CID|NR-?\d|Anexo|Súmula|S[uú]mula|L\d|F\d|M\d|G\d|J\d|K\d/i));
+          if(parece_titulo&&linhas.length===1){
+            children.push(new Paragraph({spacing:{before:180,after:60},
+              children:[txt(primeiraLinha,{bold:true,size:20,color:"005f88"})]
+            }));
+          }else{
+            children.push(new Paragraph({spacing:{after:100},alignment:AlignmentType.JUSTIFIED,
+              children:[txt(bloco.replace(/\*\*/g,'').trim(),{size:19,color:"333333"})]
+            }));
+          }
+        });
+      }else{
+        children.push(new Paragraph({spacing:{after:100},children:[txt(placeholder,{size:18,italics:true,color:"999999"})]}));
+        blank(4);
+      }
+    };
 
-    // ══════════ 5. HÁBITOS ══════════
-    subsecao("Hábitos");
-    ["Tabagista","Etilista","Sedentário","Dirige","Lazer","Relação familiar","Mora onde/com quem"].forEach(h=>campo(h,1));
-
-    // ══════════ 6. LITERATURA MÉDICA ══════════
-    secao("LITERATURA MÉDICA ACERCA DAS PATOLOGIAS DO RECLAMANTE");
-    if(d.literaturaMedica){
-      // Separar por títulos em negrito (linhas que parecem títulos de patologia)
-      const blocos=d.literaturaMedica.split(/\n\n+/).filter(p=>p.trim());
-      blocos.forEach(bloco=>{
-        // Detectar se é título (linha curta, pode ter ** ou CID)
-        const linhas=bloco.split('\n');
-        const primeiraLinha=linhas[0].replace(/\*\*/g,'').trim();
-        const parece_titulo=primeiraLinha.length<120&&(primeiraLinha.match(/[A-Z]{2,}/)||primeiraLinha.match(/CID|L\d|F\d|M\d|G\d|J\d|K\d/i));
-        if(parece_titulo&&linhas.length===1){
-          // Título de patologia
-          children.push(new Paragraph({spacing:{before:180,after:60},
-            children:[txt(primeiraLinha,{bold:true,size:20,color:"005f88"})]
-          }));
-        }else{
-          // Parágrafo de texto
-          children.push(new Paragraph({spacing:{after:100},alignment:AlignmentType.JUSTIFIED,
-            children:[txt(bloco.replace(/\*\*/g,'').trim(),{size:19,color:"333333"})]
-          }));
-        }
-      });
-    }else{
-      children.push(new Paragraph({spacing:{after:100},children:[txt("(Preencher com literatura médica relevante sobre as patologias identificadas neste caso)",{size:18,italics:true,color:"999999"})]}));
-      blank(4);
-    }
-
-    // ══════════ 7. DISCUSSÃO (aqui entra a análise da IA) ══════════
-    secao("DISCUSSÃO");
-    if(d.analiseEstrategica){
-      const paragrafos=d.analiseEstrategica.split(/\n\n+/).filter(p=>p.trim());
-      paragrafos.forEach(p=>{
-        children.push(new Paragraph({spacing:{after:120},alignment:AlignmentType.JUSTIFIED,
-          children:[txt(p.trim(),{size:20,color:"333333"})]
-        }));
-      });
-    }
-
-    // Campos estratégicos do assistente integrados na Discussão
-    const blocoAss=d.formSchema?.blocos?.find(b=>b.id==="assistente");
-    if(blocoAss){
+    // ══════════ HELPER: campos do assistente (mesmo nas duas trilhas) ══════════
+    const renderCamposAssistente=()=>{
+      const blocoAss=d.formSchema?.blocos?.find(b=>b.id==="assistente");
+      if(!blocoAss)return;
       blocoAss.secoes.forEach(sec=>{
         subsecao(sec.titulo);
         sec.campos.forEach(c=>{
@@ -2645,15 +2675,163 @@ async function gerarWordBase64(d){
           }
         });
       });
+    };
+
+    // Detecção de tipo (médica vs técnica) — d.tipo é "Médica" ou "Técnica"
+    const isTecnica = d.tipo === 'Técnica';
+    const tipoLabelLower = (d.tipoLabel||'').toLowerCase();
+    const isInsalubridade = tipoLabelLower.includes('insalubr');
+    const isPericulosidade = tipoLabelLower.includes('pericul');
+
+    if(isTecnica){
+      // ════════════════════════════════════════════════
+      //  TRILHA TÉCNICA (insalubridade / periculosidade)
+      // ════════════════════════════════════════════════
+
+      // 2. DESCRIÇÃO DA EMPRESA E DA FUNÇÃO
+      secao("DESCRIÇÃO DA EMPRESA E DA FUNÇÃO");
+      campo("Atividade econômica da reclamada (CNAE / ramo)",1);
+      campo("Função exercida pelo reclamante",1);
+      campo("Setor / local de trabalho dentro da empresa",1);
+      campo("Atividades efetivamente realizadas no dia a dia",3);
+      campo("Jornada de trabalho (horário, escala, intervalos)",1);
+      campo("Tempo de exposição à condição alegada (anos/horas por dia)",1);
+
+      // 3. AVALIAÇÃO AMBIENTAL / DAS CONDIÇÕES DE RISCO
+      const tituloAval = isInsalubridade && !isPericulosidade ? "AVALIAÇÃO AMBIENTAL — AGENTES DE INSALUBRIDADE"
+                       : isPericulosidade && !isInsalubridade ? "AVALIAÇÃO DAS CONDIÇÕES DE RISCO — PERICULOSIDADE"
+                       : "AVALIAÇÃO AMBIENTAL E DAS CONDIÇÕES DE RISCO";
+      secao(tituloAval);
+
+      if(isInsalubridade){
+        subsecao("Agentes Físicos (NR-15, Anexos 1 a 9)");
+        campo("Ruído — nível medido (dB) e tempo de exposição",2);
+        campo("Calor — IBUTG medido e taxa metabólica da atividade",2);
+        campo("Vibração / frio / umidade / radiações (se aplicável)",2);
+
+        subsecao("Agentes Químicos (NR-15, Anexos 11, 12 e 13)");
+        campo("Produtos químicos manuseados (nomes, concentrações)",3);
+        campo("Vias de exposição (inalação, contato dérmico, ingestão)",2);
+        campo("Existência de FISPQ e ventilação local exaustora",2);
+
+        subsecao("Agentes Biológicos (NR-15, Anexo 14)");
+        campo("Contato com pacientes, resíduos, animais ou material contaminado",2);
+      }
+      if(isPericulosidade){
+        subsecao("Condições de Periculosidade (NR-16)");
+        campo("Inflamáveis / explosivos — quantidade, área de risco, frequência",3);
+        campo("Energia elétrica — sistema elétrico de potência, tensão, contato",2);
+        campo("Segurança patrimonial / vigilante",2);
+        campo("Motociclista — uso habitual em vias públicas",2);
+        campo("Radiações ionizantes",1);
+      }
+
+      // 4. EPI / EPC FORNECIDOS
+      secao("EPI / EPC FORNECIDOS E FISCALIZAÇÃO");
+      campo("EPIs declarados / fornecidos pela empresa",3);
+      campo("Certificado de Aprovação (CA) e adequação ao agente",2);
+      campo("Treinamento documentado para uso do EPI",1);
+      campo("Fiscalização efetiva do uso pela empresa",2);
+      campo("EPC / medidas coletivas de proteção",2);
+      campo("Atuação da CIPA / SESMT",1);
+
+      // 5. DOCUMENTOS TÉCNICOS CATALOGADOS
+      renderDocsCatalogados("DOCUMENTOS TÉCNICOS CATALOGADOS");
+
+      // 6. REFERÊNCIAS NORMATIVAS
+      secao("REFERÊNCIAS NORMATIVAS — NRs, LIMITES E JURISPRUDÊNCIA");
+      renderTextoBlocos(d.referenciasNormativas,
+        "(Preencher com NRs aplicáveis, anexos relevantes, limites de tolerância e súmulas do TST)");
+
+      // 7. DISCUSSÃO
+      secao("DISCUSSÃO");
+      if(d.analiseEstrategica){
+        const paragrafos=d.analiseEstrategica.split(/\n\n+/).filter(p=>p.trim());
+        paragrafos.forEach(p=>{
+          children.push(new Paragraph({spacing:{after:120},alignment:AlignmentType.JUSTIFIED,
+            children:[txt(p.trim(),{size:20,color:"333333"})]
+          }));
+        });
+      }
+      renderCamposAssistente();
+
+      // 8. CARACTERIZAÇÃO TÉCNICA
+      secao("CARACTERIZAÇÃO TÉCNICA");
+      if(isInsalubridade){
+        campo("A atividade caracteriza insalubridade? (Sim/Não/Parcial) e fundamentação",3);
+        campo("Grau aplicável (Mínimo 10% / Médio 20% / Máximo 40%)",1);
+        campo("EPI fornecido neutralizou o agente? (NR-6 / Súmula 289 TST)",2);
+      }
+      if(isPericulosidade){
+        campo("A atividade caracteriza periculosidade? (Sim/Não) e fundamentação",3);
+        campo("Adicional aplicável (30% sobre salário-base)",1);
+        campo("Tempo de exposição: habitual e permanente, intermitente ou eventual?",2);
+      }
+
+      // 9. CONCLUSÃO
+      secao("CONCLUSÃO");
+      campo("Conclusão do assistente técnico",4);
+
+    }else{
+      // ════════════════════════════════════════════════
+      //  TRILHA MÉDICA (doença ocupacional / acidente)
+      // ════════════════════════════════════════════════
+
+      // 2. ANAMNESE CLÍNICO-OCUPACIONAL
+      secao("ANAMNESE CLÍNICO-OCUPACIONAL");
+      subsecao("Sobre a Função");
+      campo("Função exercida",1);
+      campo("Atividades desempenhadas",2);
+      campo("Empregos anteriores e posteriores",2);
+
+      subsecao("Sobre a História da Doença Atual");
+      campo("Início e evolução dos sintomas",2);
+      campo("Como se encontra atualmente e tratamentos em curso",2);
+      campo("Como se sustenta atualmente",1);
+
+      subsecao("Histórico Médico");
+      ["Comorbidades","Acidentes","Cirurgias","Medicamentos em uso","Histórico familiar de patologias semelhantes"].forEach(h=>campo(h,1));
+
+      subsecao("Estado Físico e Exame Físico");
+      campo("Estado geral do periciando",2);
+      campo("Exame físico dirigido",3);
+
+      // 3. DOCUMENTOS MÉDICOS CATALOGADOS
+      renderDocsCatalogados("DOCUMENTOS MÉDICOS CATALOGADOS");
+
+      // 4. AFASTAMENTO PREVIDENCIÁRIO
+      subsecao("Afastamento Previdenciário Apresentado");
+      campo("Períodos e tipo de benefício",2);
+
+      // 5. HÁBITOS
+      subsecao("Hábitos");
+      ["Tabagista","Etilista","Sedentário","Dirige","Lazer","Relação familiar","Mora onde/com quem"].forEach(h=>campo(h,1));
+
+      // 6. LITERATURA MÉDICA
+      secao("LITERATURA MÉDICA ACERCA DAS PATOLOGIAS DO RECLAMANTE");
+      renderTextoBlocos(d.literaturaMedica,
+        "(Preencher com literatura médica relevante sobre as patologias identificadas neste caso)");
+
+      // 7. DISCUSSÃO
+      secao("DISCUSSÃO");
+      if(d.analiseEstrategica){
+        const paragrafos=d.analiseEstrategica.split(/\n\n+/).filter(p=>p.trim());
+        paragrafos.forEach(p=>{
+          children.push(new Paragraph({spacing:{after:120},alignment:AlignmentType.JUSTIFIED,
+            children:[txt(p.trim(),{size:20,color:"333333"})]
+          }));
+        });
+      }
+      renderCamposAssistente();
+
+      // 8. SOBRE A CAPACIDADE LABORAL
+      secao("SOBRE A CAPACIDADE LABORAL");
+      campo("Avaliação da capacidade laboral atual",3);
+
+      // 9. CONCLUSÃO
+      secao("CONCLUSÃO");
+      campo("Conclusão do assistente técnico",4);
     }
-
-    // ══════════ 8. SOBRE A CAPACIDADE LABORAL ══════════
-    secao("SOBRE A CAPACIDADE LABORAL");
-    campo("Avaliação da capacidade laboral atual",3);
-
-    // ══════════ 9. CONCLUSÃO ══════════
-    secao("CONCLUSÃO");
-    campo("Conclusão do assistente técnico",4);
 
     // ══════════ RODAPÉ ══════════
     children.push(new Paragraph({spacing:{before:300,after:60},
